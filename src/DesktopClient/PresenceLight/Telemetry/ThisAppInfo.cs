@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Globalization;
 using System.IO;
 using System.Reflection;
 using System.Runtime.CompilerServices;
@@ -34,11 +35,33 @@ namespace PresenceLight
             return $"{date.ToShortDateString()} {date.ToShortTimeString()}";
         }
 
+        internal static string GetAppInstallType()
+        {
+            if (Convert.ToBoolean(App.StaticConfig["IsAppPackaged"], CultureInfo.InvariantCulture))
+            {
+                return "AppPackage";
+            }
+            else
+            {
+                return "Standalone";
+            }
+        }
+
         internal static string GetSettingsLocation()
         {
-            string SETTINGS_FILENAME = "settings.json";
-            StorageFolder _settingsFolder = Windows.Storage.ApplicationData.Current.LocalFolder;
-            return $"{_settingsFolder.Path}\\{SETTINGS_FILENAME}";
+            string settingsFileName = "settings.json";
+            string settingsPath = "";
+
+            if (Convert.ToBoolean(App.StaticConfig["IsAppPackaged"], CultureInfo.InvariantCulture))
+            {
+                StorageFolder _settingsFolder = Windows.Storage.ApplicationData.Current.LocalFolder;
+                settingsPath = _settingsFolder.Path;
+            }
+            else
+            {
+               settingsPath = System.AppContext.BaseDirectory;
+            }
+            return $"{settingsPath}{settingsFileName}";
         }
 
         internal static string GetPackageVersion()
@@ -90,7 +113,6 @@ namespace PresenceLight
 
             try
             {
-
                 if (ApiInformation.IsMethodPresent("Windows.ApplicationModel.Package", "GetAppInstallerInfo"))
                 {
                     var aiUri = GetAppInstallerInfoUri(Package.Current);

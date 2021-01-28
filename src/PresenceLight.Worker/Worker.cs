@@ -17,24 +17,22 @@ namespace PresenceLight.Worker
 {
     public class Worker : BackgroundService
     {
-        private readonly ConfigWrapper Config;
+        private readonly BaseConfig Config;
         private readonly IHueService _hueService;
         private readonly AppState _appState;
         private readonly ILogger<Worker> _logger;
-        private readonly UserAuthService _userAuthService;
-        private readonly GraphServiceClient _graphClient;
-
         private LIFXService _lifxService;
-
         private ICustomApiService _customApiService;
+
+        private GraphServiceClient c;
+
 
         public Worker(IHueService hueService,
                       ILogger<Worker> logger,
-                      IOptionsMonitor<ConfigWrapper> optionsAccessor,
+                      IOptionsMonitor<BaseConfig> optionsAccessor,
                       AppState appState,
                       LIFXService lifxService,
-                      ICustomApiService customApiService,
-                      UserAuthService userAuthService)
+                      ICustomApiService customApiService)
         {
             Config = optionsAccessor.CurrentValue;
             _hueService = hueService;
@@ -42,27 +40,28 @@ namespace PresenceLight.Worker
             _customApiService = customApiService;
             _logger = logger;
             _appState = appState;
-            _userAuthService = userAuthService;
-
-            _graphClient = new GraphServiceClient(userAuthService);
         }
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
             while (!stoppingToken.IsCancellationRequested)
             {
-
-                if (await _userAuthService.IsUserAuthenticated())
+                if (_appState.IsUserAuthenticated)
                 {
+                    c = _appState.GraphServiceClient;
+                    Helpers.AppendLogger(_logger, "User is Authenticated, starting worker");
                     try
                     {
                         await GetData();
                     }
                     catch (Exception e)
                     {
-                        var foo = e;
+                        Helpers.AppendLogger(_logger, "Exception occured restarting worker", e);
                     }
-                    await Task.Delay(Convert.ToInt32(Config.LightSettings.PollingInterval * 1000), stoppingToken);
+                }
+                else
+                {
+                    Helpers.AppendLogger(_logger, "User is Not Authenticated, restarting worker");
                 }
                 await Task.Delay(1000, stoppingToken);
             }
@@ -71,80 +70,83 @@ namespace PresenceLight.Worker
 
         private async Task GetData()
         {
-
-            var token = await _userAuthService.GetAccessToken();
-
-            var user = await GetUserInformation(token);
-
-            var photo = await GetPhotoAsBase64Async(token);
-
-            var presence = await GetPresence(token);
-
-            _appState.SetUserInfo(user, photo, presence);
-
-            if (!string.IsNullOrEmpty(Config.LightSettings.Hue.HueApiKey) && !string.IsNullOrEmpty(Config.LightSettings.Hue.HueIpAddress) && !string.IsNullOrEmpty(Config.LightSettings.Hue.SelectedHueLightId))
-            {
-                await _hueService.SetColor(presence.Availability, Config.LightSettings.Hue.SelectedHueLightId);
-            }
-
-            if (Config.LightSettings.LIFX.IsLIFXEnabled && !string.IsNullOrEmpty(Config.LightSettings.LIFX.LIFXApiKey))
-            {
-                await _lifxService.SetColor(presence.Availability, (Selector)Config.LightSettings.LIFX.SelectedLIFXItemId);
-            }
-
-            while (await _userAuthService.IsUserAuthenticated())
-            {
-                if (_appState.LightMode == "Graph")
-                {
-                    token = await _userAuthService.GetAccessToken();
-                    presence = await GetPresence(token);
-
-
-                    _appState.SetPresence(presence);
-                    _logger.LogInformation($"Presence is {presence.Availability}");
-                    if (!string.IsNullOrEmpty(Config.LightSettings.Hue.HueApiKey) && !string.IsNullOrEmpty(Config.LightSettings.Hue.HueIpAddress) && !string.IsNullOrEmpty(Config.LightSettings.Hue.SelectedHueLightId))
-                    {
-                        await _hueService.SetColor(presence.Availability, Config.LightSettings.Hue.SelectedHueLightId);
-                    }
-
-                    if (Config.LightSettings.LIFX.IsLIFXEnabled && !string.IsNullOrEmpty(Config.LightSettings.LIFX.LIFXApiKey))
-                    {
-                        await _lifxService.SetColor(presence.Availability, (Selector)Config.LightSettings.LIFX.SelectedLIFXItemId);
-                    }
-                    if (Config.LightSettings.Custom.IsCustomApiEnabled)
-                    {
-                        // passing the data on only when it changed is handled within the custom api service
-                        await _customApiService.SetColor(presence.Availability, presence.Activity);
-                    }
-                }
-
-
-                Thread.Sleep(Convert.ToInt32(Config.LightSettings.PollingInterval * 1000));
-            }
-
-            _logger.LogInformation("User logged out, no longer polling for presence.");
-        }
-
-        public async Task<User> GetUserInformation(string accessToken)
-        {
             try
             {
-                var me = await _graphClient.Me.Request().GetAsync();
-                _logger.LogInformation($"User is {me.DisplayName}");
-                return me;
+                var user = await GetUserInformation();
+
+                var photo = await GetPhotoAsBase64Async();
+
+                var presence = await GetPresence();
+
+                _appState.SetUserInfo(user, photo, presence);
+
+                if (!string.IsNullOrEmpty(Config.LightSettings.Hue.HueApiKey) && !string.IsNullOrEmpty(Config.LightSettings.Hue.HueIpAddress) && !string.IsNullOrEmpty(Config.LightSettings.Hue.SelectedHueLightId))
+                {
+                    await _hueService.SetColor(presence.Availability, Config.LightSettings.Hue.SelectedHueLightId);
+                }
+
+                if (Config.LightSettings.LIFX.IsLIFXEnabled && !string.IsNullOrEmpty(Config.LightSettings.LIFX.LIFXApiKey))
+                {
+                    await _lifxService.SetColor(presence.Availability, Config.LightSettings.LIFX.SelectedLIFXItemId);
+                    Helpers.AppendLogger(_logger, $"Setting LIFX Light: { Config.LightSettings.Hue.SelectedHueLightId}, Graph Presence: {presence.Availability}");
+                }
+
+                while (_appState.IsUserAuthenticated)
+                {
+                    if (_appState.LightMode == "Graph")
+                    {
+                        presence = await GetPresence();
+
+                        _appState.SetPresence(presence);
+                        Helpers.AppendLogger(_logger, $"Presence is {presence.Availability}");
+                        if (!string.IsNullOrEmpty(Config.LightSettings.Hue.HueApiKey) && !string.IsNullOrEmpty(Config.LightSettings.Hue.HueIpAddress) && !string.IsNullOrEmpty(Config.LightSettings.Hue.SelectedHueLightId))
+                        {
+                            await _hueService.SetColor(presence.Availability, Config.LightSettings.Hue.SelectedHueLightId);
+                        }
+
+                        if (Config.LightSettings.LIFX.IsLIFXEnabled && !string.IsNullOrEmpty(Config.LightSettings.LIFX.LIFXApiKey))
+                        {
+                            await _lifxService.SetColor(presence.Availability, Config.LightSettings.LIFX.SelectedLIFXItemId);
+                            Helpers.AppendLogger(_logger, $"Setting LIFX Light: { Config.LightSettings.LIFX.SelectedLIFXItemId}, Graph Presence: {presence.Availability}");
+                        }
+                        if (Config.LightSettings.Custom.IsCustomApiEnabled)
+                        {
+                            // passing the data on only when it changed is handled within the custom api service
+                            await _customApiService.SetColor(presence.Availability, presence.Activity);
+                        }
+                    }
+                    Thread.Sleep(Convert.ToInt32(Config.LightSettings.PollingInterval * 1000));
+                }
+
+                Helpers.AppendLogger(_logger, "User logged out, no longer polling for presence.");
             }
-            catch (Exception ex)
+            catch (Exception e)
             {
-                _logger.LogError($"Exception getting me: {ex.Message}");
+                Helpers.AppendLogger(_logger, "Exception occured in running worker", e);
                 throw;
             }
         }
 
-        public async Task<string> GetPhotoAsBase64Async(string accessToken)
+        public async Task<User> GetUserInformation()
         {
             try
             {
-                var photoStream = await _graphClient.Me.Photo.Content.Request().GetAsync();
+                var me = await c.Me.Request().GetAsync();
+                Helpers.AppendLogger(_logger, $"User is {me.DisplayName}");
+                return me;
+            }
+            catch (Exception ex)
+            {
+                Helpers.AppendLogger(_logger, "Exception getting me", ex);
+                throw;
+            }
+        }
+
+        public async Task<string> GetPhotoAsBase64Async()
+        {
+            try
+            {
+                var photoStream = await c.Me.Photo.Content.Request().GetAsync();
                 var memoryStream = new MemoryStream();
                 photoStream.CopyTo(memoryStream);
 
@@ -155,17 +157,16 @@ namespace PresenceLight.Worker
             }
             catch (Exception ex)
             {
-                _logger.LogError($"Exception getting photo: {ex.Message}");
+                Helpers.AppendLogger(_logger, "Exception getting photo", ex);
+                throw;
             }
-
-            return null;
         }
 
-        public async Task<Presence> GetPresence(string accessToken)
+        public async Task<Presence> GetPresence()
         {
             try
             {
-                var presence = await _graphClient.Me.Presence.Request().GetAsync();
+                var presence = await c.Me.Presence.Request().GetAsync();
 
                 var r = new Regex(@"
                 (?<=[A-Z])(?=[A-Z][a-z]) |
@@ -175,12 +176,12 @@ namespace PresenceLight.Worker
                 presence.Activity = r.Replace(presence.Activity, " ");
 
 
-                _logger.LogInformation($"Presence is {presence.Availability}");
+                Helpers.AppendLogger(_logger, $"Presence is {presence.Availability}");
                 return presence;
             }
             catch (Exception ex)
             {
-                _logger.LogError($"Exception getting presence: {ex.Message}");
+                Helpers.AppendLogger(_logger, "Exception getting presence", ex);
                 throw;
             }
         }

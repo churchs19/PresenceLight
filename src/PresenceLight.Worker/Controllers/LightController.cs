@@ -11,12 +11,12 @@ namespace PresenceLight.Worker.Controllers
     [ApiController]
     public class LightController : ControllerBase
     {
-        private readonly ConfigWrapper Config;
+        private readonly BaseConfig Config;
         private readonly IHueService _hueService;
         private LIFXService _lifxService;
         private readonly AppState _appState;
         public LightController(IHueService hueService,
-                      IOptionsMonitor<ConfigWrapper> optionsAccessor,
+                      IOptionsMonitor<BaseConfig> optionsAccessor,
                       AppState appState,
                       LIFXService lifxService)
         {
@@ -58,7 +58,7 @@ namespace PresenceLight.Worker.Controllers
 
                 if (Config.LightSettings.LIFX.IsLIFXEnabled && !string.IsNullOrEmpty(Config.LightSettings.LIFX.LIFXApiKey))
                 {
-                    await _lifxService.SetColor(_appState.CustomColor, (Selector)Config.LightSettings.LIFX.SelectedLIFXItemId);
+                    await _lifxService.SetColor(_appState.CustomColor, Config.LightSettings.LIFX.SelectedLIFXItemId);
                 }
             }
         }
