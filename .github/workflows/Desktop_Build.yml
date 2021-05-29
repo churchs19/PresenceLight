@@ -2,18 +2,21 @@ on:
   push:
     branches: [ main ]
     paths-ignore:
-    - .github/workflows/Worker_Build.yml
-    - src/PresenceLight.Worker/*
-    - README.md
-    - worker-README.md
+    - '.github/workflows/Worker_Build.yml'
+    - '.github/workflows/test.yml'
+    - 'src/PresenceLight.Worker/**'
+    - 'src/DockerFiles/**'
+    - '*.md'
 
   pull_request:
     branches: [ main ]
     paths-ignore:
-    - .github/workflows/Worker_Build.yml
-    - src/PresenceLight.Worker/*
-    - README.md
-    - worker-README.md
+    - '.github/workflows/Worker_Build.yml'
+    - '.github/workflows/test.yml'
+    - 'src/PresenceLight.Worker/**'
+    - 'src/DockerFiles/**'
+    - '*.md'
+
 jobs:
 
   Build_WPF:
@@ -64,6 +67,8 @@ jobs:
     - name: Add Version File to Artifact
       run : |
         New-Item -Path ${{ github.workspace }}\.chocolatey -Name "version.txt" -ItemType "file" -Value "${{ env.GitBuildVersionSimple }}"
+
+        New-Item -Path ${{ github.workspace }}\Build -Name "version.txt" -ItemType "file" -Value "${{ env.GitBuildVersionSimple }}"
 
         New-Item -Path ${{ github.workspace }}\${{ matrix.ChannelName }} -Name "version.txt" -ItemType "file" -Value "${{ env.GitBuildVersionSimple }}"
       shell: powershell
@@ -372,6 +377,12 @@ jobs:
           name: StandaloneSigned
           path: "${{ github.workspace }}/StandaloneSigned"
 
+      - uses: actions/download-artifact@v2
+        name: Download Release Signed
+        with:
+          name: ReleaseSigned
+          path: "${{ github.workspace }}/ReleaseSigned"
+
       - name: Get Version from File
         run: |
           version=$(<"${{ github.workspace }}/StandaloneSigned/version.txt")
@@ -413,6 +424,17 @@ jobs:
           asset_name: "PresenceLight.${{ env.VERSION }}-x86.zip"
           asset_content_type: application/zip
 
+      - name: Upload Release Asset
+        id: upload-release-asset3
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }} # This pulls from the CREATE RELEASE step above, referencing it's ID to get its outputs object, which include a `upload_url`. See this blog post for more info: https://jasonet.co/posts/new-features-of-github-actions/#passing-data-to-future-steps
+          asset_path: "/home/runner/work/presencelight/presencelight/ReleaseSigned/PresenceLight.Package_${{ env.VERSION }}.0_Test/PresenceLight.Package_${{ env.VERSION }}.0_x64.appxbundle"
+          asset_name: "PresenceLight.Package_${{ env.VERSION }}.0_x64.appxbundle"
+          asset_content_type: application/zip
+
   Deploy_Choco:
     needs: Deploy_GitHub_Release
     if: ${{ github.event_name != 'pull_request' }}
@@ -447,7 +469,7 @@ jobs:
           # Hash the Zip Files
           mkdir "${{ github.workspace }}\Download"
           Invoke-WebRequest -Uri "${{ env.GitHubReleaseUrl }}v${{ env.VERSION }}/PresenceLight.${{ env.VERSION }}-x86.zip" -OutFile "${{ github.workspace }}\\Download\\PresenceLight.${{ env.VERSION }}-x86.zip"
-          Invoke-WebRequest -Uri "${{ env.GitHubReleaseUrl }}v${{ env.VERSION }}/PresenceLight.${{ env.VERSION }}-x86.zip" -OutFile "${{ github.workspace }}\\Download\\PresenceLight.${{ env.VERSION }}-x64.zip"
+          Invoke-WebRequest -Uri "${{ env.GitHubReleaseUrl }}v${{ env.VERSION }}/PresenceLight.${{ env.VERSION }}-x64.zip" -OutFile "${{ github.workspace }}\\Download\\PresenceLight.${{ env.VERSION }}-x64.zip"
           $hash64=Get-Filehash ${{ github.workspace }}\\Download\\PresenceLight.${{ env.VERSION }}-x64.zip
           $hash86=Get-Filehash ${{ github.workspace }}\\Download\\PresenceLight.${{ env.VERSION }}-x86.zip
 
@@ -481,6 +503,80 @@ jobs:
           }
         shell: powershell
 
+  Deploy_WinGet:
+    needs: Deploy_GitHub_Release
+    if: ${{ github.event_name != 'pull_request' }}
+    environment:
+        name: Deploy_WinGet
+        url: ${{ steps.deploy_staging.outputs.webapp-url }}
+    name: Deploy WPF WinGet
+    runs-on: ubuntu-latest
+    env:
+      GitHubReleaseUrl: https://github.com/isaacrlevin/presencelight/releases/download/Desktop-
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@v2
+        name: Download Chocolatey Artifacts
+        with:
+          name: Chocolatey
+          path: "${{ github.workspace }}/Chocolatey"
+
+      - name: Get Version from File
+        run: |
+          version=$(<"${{ github.workspace }}/Chocolatey/version.txt")
+          echo "VERSION=$version" >> $GITHUB_ENV
+        shell: bash
+
+      - name: Update Winget Yaml
+        run: |
+          # Hash the Zip Files
+          mkdir "${{ github.workspace }}/Download"
+
+          Invoke-WebRequest -Uri "${{ env.GitHubReleaseUrl }}v${{ env.VERSION }}/PresenceLight.Package_${{ env.VERSION }}.0_x64.appxbundle" -OutFile "${{ github.workspace }}/Download/PresenceLight.Package_${{ env.VERSION }}.0_x64.appxbundle"
+          $hash64=Get-Filehash ${{ github.workspace }}/Download/PresenceLight.Package_${{ env.VERSION }}.0_x64.appxbundle
+
+          # Update winget.yaml
+          $yaml = Get-Content -path "${{ github.workspace }}/Build/winget.yaml"
+          $yaml = $yaml -replace '{x64Link}' , "${{ env.GitHubReleaseUrl }}v${{ env.VERSION }}/PresenceLight.Package_${{ env.VERSION }}.0_x64.appxbundle"
+          $yaml = $yaml -replace '{HASHx64}', $hash64.Hash
+          $yaml = $yaml -replace '{VERSION}', " ${{ env.VERSION }}"
+          $yaml | Set-Content -Path "${{ github.workspace }}/Build/${{ env.VERSION }}.yaml"
+        shell: pwsh
+
+      - name: Add Version File to Artifact
+        run : |
+          New-Item -Path ${{ github.workspace }} -Name "token.txt" -ItemType "file" -Value "${{ secrets.GHCliToken }}"
+        shell: pwsh
+
+      - name: GitHub Cli Auth
+        run: |
+          gh auth login --with-token < "${{ github.workspace }}/token.txt"
+
+      - name: GitHub Cli Fork
+        run: |
+          cd ~
+          gh repo fork microsoft/winget-pkgs --clone=false
+          git clone "https://${{ secrets.GHCliToken  }}@github.com/isaacrlevin/winget-pkgs.git"
+          dir
+
+      - name: GitHub Cli
+        run: |
+          mkdir -p "~/winget-pkgs/manifests/i/isaaclevin/presencelight/${{ env.VERSION }}"
+          cp "${{ github.workspace }}/Build/${{ env.VERSION }}.yaml" "~/winget-pkgs/manifests/i/isaaclevin/presencelight/${{ env.VERSION }}"
+          cd ~/winget-pkgs
+
+          git config --global user.email "github-action@microsoft.com"
+          git config --global user.name "GitHub Action"
+
+          git add .
+          git commit -m "Submitting  PresenceLight version ${{ env.VERSION }}.yaml"
+          git push
+
+          COMMIT_MESSAGE="Adding PresenceLight Version: ${{ env.GitHubReleaseUrl }}v${{ env.VERSION }}/PresenceLight.Package_${{ env.VERSION }}.0_x64.appxbundle"
+          gh pr create --title "Submitting  PresenceLight Version ${{ env.VERSION }}" --body "$COMMIT_MESSAGE" -R microsoft/winget-pkgs
 
   Deploy_Store:
     needs: Deploy_Azure_Blob
@@ -491,51 +587,17 @@ jobs:
     name: Deploy WPF Windows Store
     runs-on: ubuntu-latest
     steps:
-    - name: Azure Login
-      uses: azure/login@v1
-      with:
-        creds: ${{ secrets.AZURE_CREDENTIALS }}
-
-    - uses: actions/download-artifact@v2
-      name: Download Signing Scripts Artifacts
-      with:
-        name: SigningScripts
-        path: "${{ github.workspace }}/SigningScripts"
-
     - uses: actions/download-artifact@v2
       name: Download Release Signed
       with:
         name: ReleaseSigned
         path: "${{ github.workspace }}/ReleaseSigned"
 
-    - name: Get Version from File
-      run: |
-        dir "${{ github.workspace }}/ReleaseSigned"
-        version=$(<"${{ github.workspace }}/ReleaseSigned/version.txt")
-        echo "VERSION=$version" >> $GITHUB_ENV
-
-    - name: Update .ENV File
-      working-directory: "${{ github.workspace }}/SigningScripts/StorePublish"
-      run: |
-        # Update Verification.txt
-        $envFile = Get-Content -path ./.env
-        $envFile = $envFile -replace '{TENANT}' ,"${{ secrets.STORE_TENANT }}"
-        $envFile = $envFile -replace '{CLIENT_ID}' ,"${{ secrets.STORE_CLIENT_ID }}"
-        $envFile = $envFile -replace '{CLIENT_SECRET}', "${{ secrets.STORE_CLIENT_SECRET }}"
-        $envFile = $envFile -replace '{ENDPOINT}', "${{ secrets.ENDPOINT }}"
-        $envFile = $envFile -replace '{APP_ID}', "${{ secrets.APP_ID }}"
-        $envFile = $envFile -replace '{PACKAGE_PATH}', "${{ github.workspace }}/ReleaseSigned/PresenceLight.Package_${{ env.VERSION }}.0_x64_bundle.appxupload"
-        $envFile | Set-Content -Path ./.env
-
-        echo $envFile
-      shell: pwsh
-
-    - uses: bahmutov/npm-install@v1
-      name: NPM Install
+    - name: Windows Store Publish
+      uses: isaacrlevin/windows-store-action@1.0
       with:
-        working-directory: "${{ github.workspace }}/SigningScripts/StorePublish"
-
-    - name: Publish to Store
-      working-directory: "${{ github.workspace }}/SigningScripts/StorePublish"
-      run: |
-        npm run publish
+        tenant-id: ${{ secrets.STORE_TENANT }}
+        client-id: ${{ secrets.STORE_CLIENT_ID }}
+        client-secret: ${{ secrets.STORE_CLIENT_SECRET }}
+        app-id: ${{ secrets.APP_ID }}
+        package-path: "${{ github.workspace }}/ReleaseSigned/"

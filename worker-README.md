@@ -3,7 +3,10 @@
 ![Build Status](https://dev.azure.com/isaaclevin/PresenceLight/_apis/build/status/CI-build-worker?branchName=main)
 
 ### Worker Version Installs
-http://presencelightapp.azurewebsites.net/
+
+ Worker Download Site | Worker Container |
+| ------- | ---------------   |
+| [<img src="https://github.com/isaacrlevin/PresenceLight/raw/main/Icon.png" width="100">](https://presencelight.blob.core.windows.net/nightly/index.html) | [<img src="https://user-images.githubusercontent.com/8878502/110870857-2602a900-8282-11eb-8846-89c61a219236.png" width="100">](https://hub.docker.com/r/isaaclevin/presencelight)  [<img src="https://user-images.githubusercontent.com/8878502/110871471-55fe7c00-8283-11eb-8ce4-afeeaf62458a.png" width="100">](https://github.com/users/isaacrlevin/packages/container/package/presencelight) |
 
 ### App Setup
 The cross platform version of PresenceLight runs as a .NET Core 5 single file executable application that runs a Server-Side Blazor Web Application and a ASP.NET Core Worker Service. The Blazor App is used as the mechanism to log the user in and configure settings of the app, while the Worker Service is responsible for interaction with Graph Api as well as the Smart Lights. This allows users to not need to have a UI version of the app open at all time, since the worker runs as a process. There is no installer for PresenceLight, so all that needs to be done is to download the zip folder from the [install site](http://presencelightapp.azurewebsites.net/), unzip, and run the .exe. At this point, a terminal window will open showing
@@ -19,16 +22,19 @@ Here you will the Url for the Kestrel hosted Web Application. Going to that Url 
  To make the process even cleaner, you can configure a startup task to run the exe at startup, and PresenceLight will be available at the url listed the first time you ran it.
 
 ## Advanced Configuring
-
 If you want to configure PresenceLight to use your own settings (maybe your own AAD, your own smart light registered app), you can do that by editing the appsettings.json
 
 To do this in docker, just run the container once, and than stop and rerun by mounting the appsettings via a local volume.**
 
+Log data and Configuration file will need to be written to a directory that has read/write enabled.   This is accomplished using
+volumes.
 ```dotnetcli
 volumes:
-    /somedirectory/appsettings.json:/app/appsettings.json
-    /somedirectory/PresenceLightSettings.json:/app/PresenceLightSettings.json
+    /somedirectory:/app/config
 ```
+When running under a container, logs will save to  /app/config/logs, and so will the dynamic PresenceLightSettings.json file.
+
+If you need to customize your configuration.  Add/edit one or more of the necessary configuration files in this attached directory.
 
 This will get you host access to the appsettings.json and PresenceLightSettings.json
 

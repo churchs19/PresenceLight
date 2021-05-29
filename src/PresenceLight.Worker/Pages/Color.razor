@@ -3,8 +3,6 @@
 @using LifxCloud.NET.Models
 @inject AppState appState
 @inject IOptionsMonitor<BaseConfig> Config
-@inject IHueService _hueService;
-@inject LIFXService _lifxService;
 @inject IJSRuntime jsRuntime;
 @inject ILogger<Color> _logger;
 
@@ -12,11 +10,13 @@
     <div class="row">
         <div class="container-fluid">
             <div class="row-fluid">
-                <div class="centering text-center">
-                    <h1 class="centering text-center">Set Light Colors</h1>
+                <div>
+                    <h1>Set Light Colors</h1>
                     <br />
                     <br />
-                    <div id="extraPicker" class="colorPicker"></div>
+                    <div style="width: 85%">
+                        <div id="extraPicker" class="colorPicker"></div>
+                    </div>
                     <br />
                     <button @onclick="SetColor" class="btn btn-primary">Set Color</button>
                     <button disabled="@isGraphDisabled" @onclick="SyncTeamsPresence" class="btn btn-primary">Sync Teams Presence</button>
@@ -48,21 +48,61 @@
 
             if (appState.LightMode == "Custom")
             {
-                if (!string.IsNullOrEmpty(Config.CurrentValue.LightSettings.Hue.HueApiKey) && !string.IsNullOrEmpty(Config.CurrentValue.LightSettings.Hue.HueIpAddress) && !string.IsNullOrEmpty(Config.CurrentValue.LightSettings.Hue.SelectedHueLightId))
+				 if (!string.IsNullOrEmpty(Config.CurrentValue.LightSettings.Hue.HueApiKey) && !string.IsNullOrEmpty(Config.CurrentValue.LightSettings.Hue.HueIpAddress) && !string.IsNullOrEmpty(Config.CurrentValue.LightSettings.Hue.SelectedItemId))
                 {
-                    await _hueService.SetColor(appState.CustomColor, Config.CurrentValue.LightSettings.Hue.SelectedHueLightId);
+                    if (Config.CurrentValue.LightSettings.Hue.UseRemoteApi)
+                    {
+                        if (!string.IsNullOrEmpty(Config.CurrentValue.LightSettings.Hue.RemoteBridgeId))
+                        {
+                            await _mediator.Send(new Core.RemoteHueServices.SetColorCommand
+                            {
+                                Availability = appState.CustomColor,
+                                LightId = Config.CurrentValue.LightSettings.Hue.SelectedItemId,
+                                BridgeId = Config.CurrentValue.LightSettings.Hue.RemoteBridgeId
+                            }).ConfigureAwait(true);
+                        }
+                    }
+                    else
+                    {
+                        await _mediator.Send(new Core.HueServices.SetColorCommand() { Activity = appState.CustomColor, Availability = appState.CustomColor, LightID = Config.CurrentValue.LightSettings.Hue.SelectedItemId }).ConfigureAwait(true);
+
+                    }
                 }
 
-                if (Config.CurrentValue.LightSettings.LIFX.IsLIFXEnabled && !string.IsNullOrEmpty(Config.CurrentValue.LightSettings.LIFX.LIFXApiKey))
+                if (Config.CurrentValue.LightSettings.LIFX.IsEnabled && !string.IsNullOrEmpty(Config.CurrentValue.LightSettings.LIFX.LIFXApiKey))
                 {
-                    await _lifxService.SetColor(appState.CustomColor, Config.CurrentValue.LightSettings.LIFX.SelectedLIFXItemId);
+                    await _mediator.Send(new Core.LifxServices.SetColorCommand() { Availability = appState.CustomColor, Activity = appState.CustomColor, LightId = Config.CurrentValue.LightSettings.LIFX.SelectedItemId }).ConfigureAwait(true);
+                }
+
+                if (Config.CurrentValue.LightSettings.Yeelight.IsEnabled && !string.IsNullOrEmpty(Config.CurrentValue.LightSettings.Yeelight.SelectedItemId))
+                {
+                    await _mediator.Send(new PresenceLight.Core.YeelightServices.SetColorCommand { Activity = appState.CustomColor, Availability = appState.CustomColor, LightId = Config.CurrentValue.LightSettings.Yeelight.SelectedItemId }).ConfigureAwait(true);
+                }
+
+                if (Config.CurrentValue.LightSettings.CustomApi.IsEnabled)
+                {
+                    string response = await _mediator.Send(new Core.CustomApiServices.SetColorCommand
+                    {
+                        Activity = appState.CustomColor,
+                        Availability = appState.CustomColor
+                    });
+                }
+
+                if (Config.CurrentValue.LightSettings.Wiz.IsEnabled)
+                {
+                    await _mediator.Send(new Core.WizServices.SetColorCommand
+                    {
+                        Activity = appState.CustomColor,
+                        Availability = appState.CustomColor,
+                        LightID = Config.CurrentValue.LightSettings.Wiz.SelectedItemId
+                    });
                 }
             }
         }
         catch (Exception e)
         {
-            Helpers.AppendLogger(_logger, "Error Occured Setting Custom Color", e);
-            throw e;
+            _logger.LogError(e, "Error Occured Setting Custom Color");
+            throw;
         }
     }
 
